@@ -1,211 +1,464 @@
 import numpy as np
 import os
-from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.fft import fft
+
+
+###################################################################################################
+# PART 1 : Open and read the files 
 
 def read_single_file(filepath):
     """
-    Lit un fichier et retourne les composantes u, v, w de la vitesse
-    
+    Reads a single pencil file and returns the velocity components.
+
     Args:
-        filepath: Chemin vers le fichier à lire
-        
+        filepath: Path to the pencil file (.txt)
+
     Returns:
-        u, v, w: Les trois composantes de la vitesse sous forme de tableaux numpy
+        u, v, w: NumPy arrays containing the velocity components in x, y, and z directions
     """
     data = np.loadtxt(filepath)
-    return data[:, 0], data[:, 1], data[:, 2]  # u, v, w
+    u, v, w = data[:, 0], data[:, 1], data[:, 2]
+    return u, v, w
+
 
 def get_file_path(dimension, i, j):
     """
-    Construit le chemin vers un fichier de données
-    
+    Builds the path to a data file
+
     Args:
-        dimension: 'x', 'y' ou 'z'
-        i, j: indices de position
-    
+        dimension: 'x', 'y', or 'z' — the direction of the pencil
+        i, j: position indices
+
     Returns:
-        Chemin absolu vers le fichier
+        Path to the file
     """
     current_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(current_dir, f'pencils_{dimension}', f'{dimension}_{i}_{j}.txt')
 
 
+###################################################################################################
+# PART 2 : Global quantities
 
-# Definitions of turbulence parameters
-# k : kinetic energy
-# e : dissipation rate with the relation (valid in HIT) e=15*nu*(du/dx^2)_ta
-# L : integral length scale
-# Re_L : Reynolds number based on the integral length scale L
-# eta : Kolmogorov scale
-# Lambda : Taylor microscale
-# Re_lambda : Reynolds number based on the Taylor microscale Lambda
+"""
+Definitions of turbulence parameters
+- k : kinetic energy
+- e : dissipation rate with the relation (valid in HIT) e=15*nu*(du/dx^2)_ta
+- L : integral length scale
+- Re_L : Reynolds number based on the integral length scale L
+- eta : Kolmogorov scale
+- Lambda : Taylor microscale
+- Re_lambda : Reynolds number based on the Taylor microscale Lambda
+"""
 
 
+L = 2*np.pi         # domain size
+nu = 1.10555e-5     # kinematic viscosity
 
-L = 2*np.pi  # domain size
-nu = 1.10555e-5    # kinematic viscosity
 
-
-# Plot must be in function of r/eta in loglog scale
-
-def load_all_data():
+# 1 : Turbulent kinetic energy k_bar
+def compute_k_bar():
     """
-    Charge toutes les données de tous les fichiers et calcule les moyennes globales
+    Computes the average turbulent kinetic energy over all 48 pencils.
+
+    Returns:
+        k_bar: Scalar value of the turbulent kinetic energy
     """
-    # Listes pour stocker toutes les composantes
-    all_u = []
-    all_v = []
-    all_w = []
-    
-    # Pour chaque dimension (x, y, z)
-    for dim in ['x', 'y', 'z']:
-        # Pour chaque position i, j
+    total_k = 0
+    count = 0
+    for dimension in ['x', 'y', 'z']:
         for i in range(4):
             for j in range(4):
-                filepath = get_file_path(dim, i, j)
-                try:
-                    u, v, w = read_single_file(filepath)
-                    all_u.extend(u)  # Ajouter toutes les valeurs de u
-                    all_v.extend(v)  # Ajouter toutes les valeurs de v
-                    all_w.extend(w)  # Ajouter toutes les valeurs de w
-                except Exception as e:
-                    print(f"Erreur avec le fichier {filepath}: {e}")
-    
-    # Convertir en tableaux numpy pour les calculs
-    all_u = np.array(all_u)
-    all_v = np.array(all_v)
-    all_w = np.array(all_w)
-    
-    return all_u, all_v, all_w
+                filepath = get_file_path(dimension, i, j)
+                u, v, w = read_single_file(filepath)
+                k_local = 0.5 * (np.mean(u**2) + np.mean(v**2) + np.mean(w**2))
+                total_k += k_local
+                count += 1
+    return total_k / count
+
+k_bar = compute_k_bar()
+print(f"Turbulent kinetic energy k_bar = {k_bar:.6e} m^2/s^2")
 
 
-# 1 : Calcul de l'énergie cinétique moyenne
+# 2 : Dissipation rate epsilon_bar
+def deriv_4th_order(f, dx):
+    """
+    Computes the spatial derivative df/dx using fourth-order finite differences.
 
-def compute_kinetic_energy(u, v, w):
-    """Calcule l'énergie cinétique"""
-    return 0.5 * (u**2 + v**2 + w**2)
+    Args:
+        f: 1D NumPy array of function values
+        dx: Grid spacing
 
-# Charger toutes les données
-print("Chargement de toutes les données...")
-u, v, w = load_all_data()
+    Returns:
+        df: 1D NumPy array of derivative values
+    """
+    df = np.zeros_like(f)
+    df[2:-2] = (-f[4:] + 8*f[3:-1] - 8*f[1:-3] + f[0:-4]) / (12 * dx)
+    df[0]  = (-25*f[0] + 48*f[1] - 36*f[2] + 16*f[3] - 3*f[4]) / (12*dx)
+    df[1]  = (-3*f[0] - 10*f[1] + 18*f[2] - 6*f[3] + f[4]) / (12*dx)
+    df[-2] = (3*f[-5] - 16*f[-4] + 36*f[-3] - 48*f[-2] + 25*f[-1]) / (12*dx)
+    df[-1] = (-f[-5] + 6*f[-4] - 18*f[-3] + 10*f[-2] + 3*f[-1]) / (12*dx)
+    return df
 
-# Calculer l'énergie cinétique moyenne
-k = compute_kinetic_energy(u, v, w)
-k_mean = np.mean(k)
+def compute_epsilon_bar():
+    """
+    Computes the average dissipation rate epsilon over all 48 pencils.
 
-print("\nStatistiques globales:")
-print(f"Nombre total de points: {len(u)}")
-print(f"Moyennes des composantes:")
-print(f"u_mean = {np.mean(u):.6f}")
-print(f"v_mean = {np.mean(v):.6f}")
-print(f"w_mean = {np.mean(w):.6f}")
-print(f"\nÉnergie cinétique moyenne: {k_mean:.6f}")
+    Returns:
+        epsilon_bar: Scalar value of the dissipation rate
+    """
+    total_eps = 0
+    count = 0
+    dx = L / 32768  # grid spacing
 
+    for dimension in ['x', 'y', 'z']:
+        for i in range(4):
+            for j in range(4):
+                filepath = get_file_path(dimension, i, j)
+                u, v, w = read_single_file(filepath)
 
-# 2 : Calcul du taux de dissipation moyen
+                if dimension == 'x':
+                    du_dx = deriv_4th_order(u, dx)
+                    eps_local = 15 * nu * np.mean(du_dx**2)
+                elif dimension == 'y':
+                    dv_dy = deriv_4th_order(v, dx)
+                    eps_local = 15 * nu * np.mean(dv_dy**2)
+                elif dimension == 'z':
+                    dw_dz = deriv_4th_order(w, dx)
+                    eps_local = 15 * nu * np.mean(dw_dz**2)
 
-def compute_dissipation_rate(u, nu):
-    """Calcule le taux de dissipation moyen"""
-    dx = L / len(u)  # Espacement entre les points
-    du_dx = (-np.roll(u, -2) + 8*np.roll(u, -1) - 8*np.roll(u, 1) + np.roll(u, 2)) / (12 * dx)
-    dissipation = 15 * nu * np.mean(du_dx**2)
-    return np.mean(dissipation)
+                total_eps += eps_local
+                count += 1
 
-e_mean = compute_dissipation_rate(u, nu)
-print(f"Taux de dissipation moyen: {e_mean:.6f}")
+    return total_eps / count
 
-# 3 : Calcul de l'échelle de Kolmogorov
-
-def compute_kolmogorov_scale(nu, e):
-    """Calcule l'échelle de Kolmogorov"""
-    return (nu**3 / e)**0.25
-
-eta = compute_kolmogorov_scale(nu, e_mean)
-print(f"Échelle de Kolmogorov : {eta:.6f}")
-
-# 4 : Calcul de l'échelle intégrale
-def compute_integral_scale(k, e):
-    """Calcule l'échelle intégrale"""
-    return (k**1.5) / e
-L_integral = compute_integral_scale(k_mean, e_mean)
-print(f"Échelle intégrale : {L_integral:.6f}")
-# 5 : Calcul de l'échelle de Taylor
-
-def compute_taylor_microscale(k, nu, e):
-    return (10*nu*k / e)**0.5
-Lambda = compute_taylor_microscale(k_mean, nu, e_mean)
-print(f"Échelle de Taylor : {Lambda:.6f}")
-
-# 6 : Calcul des nombres de Reynolds
-
-def compute_reynolds_numbers(k, Lambda, nu,e):
-    """Calcule les nombres de Reynolds basés sur L et Lambda"""
-    
-    Re_lambda = (k**0.5) * Lambda / nu
-    return Re_lambda
-
-Re_lambda = compute_reynolds_numbers(k_mean, Lambda, nu, e_mean)
-print(f"Nombre de Reynolds basé sur Lambda : {Re_lambda:.6f}")
+epsilon_bar = compute_epsilon_bar()
+print(f"Dissipation rate epsilon = {epsilon_bar:.6e} m^2/s^3")
 
 
-# STRUCTURE FUNCTIONS 
+# 3 : Integral scale L_bar
+def compute_integral_scale(k_bar, epsilon_bar):
+    """
+    Computes the integral length scale L_bar using the HIT relation.
 
-# Longitudinal structure functions D_11(r) = <(u(x+r)-u(x))^2>
-# Obtain the longitudinal and transverse structure functions, D11(r eˆx) and D22(r eˆx),
-# for r/η up to 5×10**3
-# Since D33(r eˆx)) = D22(r eˆx) in HIT, you have twice as much
-# data available per pencil to obtain the transverse function.
+    Args:
+        k_bar: Average turbulent kinetic energy
+        epsilon_bar: Average dissipation rate
 
+    Returns:
+        L_bar: Integral length scale
+    """
+    return k_bar**1.5 / epsilon_bar
 
-def compute_structure_functions(u, max_r):
-    """Calcule les fonctions de structure D11 et D22 jusqu'à max_r"""
-    D11 = np.zeros(max_r)
-    D22 = np.zeros(max_r)
-    N = len(u)
-    
-    for r in range(1, max_r + 1):
-        diffs = u[r:] - u[:-r]
-        D11[r-1] = np.mean(diffs**2)
-        # Pour D22, on utilise la même approche en supposant isotropie
-        D22[r-1] = np.mean(diffs**2)  # En HIT, D22 est similaire à D11 pour les statistiques globales
-    
-    return D11, D22
+L_bar = compute_integral_scale(k_bar, epsilon_bar)
+print(f"Integral length scale L = {L_bar:.6e} m")
 
 
-def compansated_compute_structure_functions(u, max_r):
-    print("For eta >> r but not too large : D11(r) ~ C2 (e r)^{2/3} with C2 ~ 2.1 and D22(r) ~ 4/3 C2 (e r)^{2/3}")
-    D11 = 2.1*(e_mean * np.arange(1, max_r+1))**(2/3)
-    D22 = (4/3)*2.1*(e_mean * np.arange(1, max_r+1))**(2/3)
-    return D11, D22
+# 4 : Reynolds number
+def compute_rms_velocities():
+    """
+    Computes RMS velocities using directional pencils:
+    - u from x-pencils
+    - v from y-pencils
+    - w from z-pencils
 
-max_r = int(5e2)
-D11, D22 = compute_structure_functions(u, max_r)
-D11_comp, D22_comp = compansated_compute_structure_functions(u, max_r)
+    Returns:
+        u_rms, v_rms, w_rms: RMS velocities in x, y, and z directions
+    """
+    # u from x-pencils
+    u_sq_sum = 0
+    count = 0
+    for i in range(4):
+        for j in range(4):
+            filepath = get_file_path('x', i, j)
+            u, _, _ = read_single_file(filepath)
+            u_sq_sum += np.mean(u**2)
+            count += 1
+    u_rms = np.sqrt(u_sq_sum / count)
 
-print(f"\nFonctions de structure calculées jusqu'à r = {max_r}")
-# Tracer les fonctions de structure
-r_values = np.arange(1, max_r+1)
-plt.loglog(r_values, D11, label='D11(r)')
-plt.loglog(r_values, D22, label='D22(r)')
-plt.loglog(r_values, D11_comp, label='D11 compensée', linestyle='--')
-plt.loglog(r_values, D22_comp, label='D22 compensée', linestyle='--')
-plt.xlabel('r')
-plt.ylabel('Structure Functions')
-plt.title('Fonctions de structure D11 et D22')
+    # v from y-pencils
+    v_sq_sum = 0
+    count = 0
+    for i in range(4):
+        for j in range(4):
+            filepath = get_file_path('y', i, j)
+            _, v, _ = read_single_file(filepath)
+            v_sq_sum += np.mean(v**2)
+            count += 1
+    v_rms = np.sqrt(v_sq_sum / count)
+
+    # w from z-pencils
+    w_sq_sum = 0
+    count = 0
+    for i in range(4):
+        for j in range(4):
+            filepath = get_file_path('z', i, j)
+            _, _, w = read_single_file(filepath)
+            w_sq_sum += np.mean(w**2)
+            count += 1
+    w_rms = np.sqrt(w_sq_sum / count)
+
+    return u_rms, v_rms, w_rms
+
+u_rms, v_rms, w_rms = compute_rms_velocities()
+
+def compute_reynolds_number(u_rms, L_bar, nu):
+    """
+    Computes the Reynolds number based on the integral scale.
+
+    Args:
+        u_rms: RMS velocity (can be averaged over u', v', w')
+        L_bar: Integral length scale
+        nu: Kinematic viscosity
+
+    Returns:
+        Re_L: Reynolds number
+    """
+    return k_bar**2 / (nu * epsilon_bar)
+    # return u_rms * L_bar / nu
+
+u_rms, v_rms, w_rms = compute_rms_velocities()
+rms_velocities_avg = (u_rms + v_rms + w_rms) / 3
+Re = compute_reynolds_number(rms_velocities_avg, L_bar, nu)
+print(f"Reynolds number Re = {Re:.2f}")
+
+
+# 5 : Kolmogorov scale eta 
+def compute_kolmogorov_scale(nu, epsilon_bar):
+    """
+    Computes the Kolmogorov scale eta.
+
+    Args:
+        nu: Kinematic viscosity
+        epsilon_bar: Average dissipation rate
+
+    Returns:
+        eta: Kolmogorov length scale
+    """
+    return (nu**3 / epsilon_bar)**0.25
+
+eta = compute_kolmogorov_scale(nu, epsilon_bar)
+print(f"Kolmogorov scale eta = {eta:.6e} m")
+
+
+# 6 : Taylor micro-scale lambda
+# VERSION 1
+def compute_taylor_microscale_directional(u_rms, v_rms, w_rms, nu, epsilon_bar):
+    """
+    Computes directional Taylor microscales lambda_x, lambda_y, lambda_z.
+
+    Args:
+        u_rms, v_rms, w_rms: RMS velocities in x, y, z directions
+        nu: Kinematic viscosity
+        epsilon_bar: Average dissipation rate
+
+    Returns:
+        lambda_x, lambda_y, lambda_z: Taylor microscales in each direction
+    """
+    factor = np.sqrt(15 * nu / epsilon_bar)
+    lambda_x = u_rms * factor
+    lambda_y = v_rms * factor
+    lambda_z = w_rms * factor
+    return lambda_x, lambda_y, lambda_z
+
+lambda_x, lambda_y, lambda_z = compute_taylor_microscale_directional(u_rms, v_rms, w_rms, nu, epsilon_bar)
+lambda_mean = (lambda_x + lambda_y + lambda_z) / 3
+print(f"Taylor microscale lambda = {lambda_mean:.6e} m")
+
+# VERSION 2
+def compute_taylor_microscale_scalar(u_rms, v_rms, w_rms, nu, epsilon_bar):
+    """
+    Computes scalar Taylor microscale using averaged RMS velocity.
+
+    Returns:
+        lambda_scalar: Taylor microscale
+    """
+    u_rms_avg = np.sqrt((u_rms**2 + v_rms**2 + w_rms**2) / 3)
+    return u_rms_avg * np.sqrt(15 * nu / epsilon_bar)
+
+lambda_scalar = compute_taylor_microscale_scalar(u_rms, v_rms, w_rms, nu, epsilon_bar)
+print(f"Taylor microscale lambda = {lambda_scalar:.6e} m")
+
+
+# 7 : Reynolds number Re_lambda
+def compute_re_lambda(u_rms_avg, lambda_mean, nu):
+    """
+    Computes the Taylor-scale Reynolds number Re_lambda.
+
+    Args:
+        u_rms_avg: Average RMS velocity over u', v', w'
+        lambda_mean: Mean Taylor microscale
+        nu: Kinematic viscosity
+
+    Returns:
+        Re_lambda: Taylor-scale Reynolds number
+    """
+    return u_rms_avg * lambda_mean / nu
+
+u_rms_avg = (u_rms + v_rms + w_rms) / 3
+Re_lambda = compute_re_lambda(u_rms_avg, lambda_mean, nu)
+print(f"Taylor-scale Reynolds number Re_lambda = {Re_lambda:.2f}")
+
+
+###################################################################################################
+# PART 3 : Structure functions 
+
+def compute_structure_functions(f, max_r):
+    """
+    Computes the second-order structure function D(r) for a 1D velocity signal f.
+
+    Args:
+        f: 1D NumPy array of velocity values
+        max_r: maximum separation in grid points
+
+    Returns:
+        r_vals: array of separation distances
+        D_vals: array of structure function values
+    """
+    r_vals = np.arange(1, max_r + 1)
+    D_vals = np.zeros_like(r_vals, dtype=np.float64)
+
+    for idx, r in enumerate(r_vals):
+        diffs = f[r:] - f[:-r]
+        D_vals[idx] = np.mean(diffs**2)
+
+    return r_vals, D_vals
+
+
+def average_structure_functions(dimension, component, max_r):
+    """
+    Averages structure functions over all 16 pencils in a given direction.
+
+    Args:
+        dimension: 'x', 'y', or 'z'
+        component: 0 for u, 1 for v, 2 for w
+        max_r: maximum separation in grid points
+
+    Returns:
+        r_vals, D_avg: averaged structure function
+    """
+    D_total = np.zeros(max_r)
+    count = 0
+
+    for i in range(4):
+        for j in range(4):
+            filepath = get_file_path(dimension, i, j)
+            u, v, w = read_single_file(filepath)
+            f = [u, v, w][component]
+            r_vals, D_vals = compute_structure_functions(f, max_r)
+            D_total += D_vals
+            count += 1
+
+    return r_vals, D_total / count
+
+
+max_r = int(5e3 * eta / (L / 32768))  # convert r/η to grid points
+
+# Longitudinal: u from x-pencils
+r_vals, D11 = average_structure_functions('x', 0, max_r)
+
+# Transverse: v and w from x-pencils (twice the data)
+r_vals_v, D22_v = average_structure_functions('x', 1, max_r)
+r_vals_w, D22_w = average_structure_functions('x', 2, max_r)
+D22 = (D22_v + D22_w) / 2
+
+# Convert r to r/η
+r_eta = r_vals * (L / 32768) / eta
+
+# Compensated structure functions
+C2 = (18/55) * 1.6  # longitudinal
+C2_prime = (4/3) * C2  # transverse
+
+D11_comp = D11 / ((epsilon_bar * r_vals * (L / 32768))**(2/3))
+D22_comp = D22 / ((epsilon_bar * r_vals * (L / 32768))**(2/3))
+
+
+plt.figure(figsize=(10, 5))
+plt.loglog(r_eta, D11, label='D11 (longitudinal)')
+plt.loglog(r_eta, D22, label='D22 (transverse)')
+plt.xlabel('r / η')
+plt.ylabel('Structure function D(r)')
 plt.legend()
+plt.grid(True)
+plt.title('Structure functions D11 and D22')
 plt.show()
 
-# compute slope in the inertial range
+plt.figure(figsize=(10, 5))
+plt.semilogx(r_eta, D11_comp, label='Compensated D11')
+plt.semilogx(r_eta, D22_comp, label='Compensated D22')
+plt.axhline(C2, color='gray', linestyle='--', label='C2 ≈ 0.52')
+plt.axhline(C2_prime, color='gray', linestyle=':', label="C2' ≈ 0.70")
+plt.xlabel('r / η')
+plt.ylabel('Compensated structure function')
+plt.legend()
+plt.grid(True)
+plt.title('Compensated structure functions')
+plt.show()
 
-def compute_inertial_range_slope(D, r_values, r_min, r_max):
-    """Calcule la pente dans la plage inertielle"""
-    mask = (r_values >= r_min) & (r_values <= r_max)
-    log_r = np.log(r_values[mask])
-    log_D = np.log(D[mask])
-    slope, intercept = np.polyfit(log_r, log_D, 1)
-    return slope
-slope_D11 = compute_inertial_range_slope(D11, r_values, 10, 1000)
-slope_D22 = compute_inertial_range_slope(D22, r_values, 10, 1000)
-print(f"Pente de D11 dans la plage inertielle : {slope_D11:.6f}")
-print(f"Pente de D22 dans la plage inertielle : {slope_D22:.6f}")
+
+###################################################################################################
+# PART 4 : One-dimensional energy spectra
+
+def compute_spectrum(f):
+    f_hat = np.fft.fft(f)
+    E_k = 0.5 * np.abs(f_hat)**2
+    return E_k[:N//2]
+
+def average_energy_spectra():
+    E11_total = np.zeros(N//2)
+    E22_total = np.zeros(N//2)
+    count = 0
+
+    for i in range(4):
+        for j in range(4):
+            filepath = get_file_path('x', i, j)
+            u, v, w = read_single_file(filepath)
+            E11_total += compute_spectrum(u)
+            E22_total += compute_spectrum(v)
+            E22_total += compute_spectrum(w)
+            count += 1
+
+    E11_avg = E11_total / count
+    E22_avg = E22_total / (2 * count)
+    return E11_avg, E22_avg
+
+# Compute spectra
+N = 32768
+dx = L / N
+E11, E22 = average_energy_spectra()
+k_vals = np.fft.fftfreq(N, dx)[:N//2]
+k_eta = k_vals * eta
+prefactor = (epsilon_bar * nu**5)**0.25
+
+# Dimensionless spectra
+E11_dimless = E11 / prefactor
+E22_dimless = E22 / prefactor
+
+# Compensated spectra
+E11_comp = (k_eta**(5/3)) * E11_dimless
+E22_comp = (k_eta**(5/3)) * E22_dimless
+
+# Plotting
+plt.figure(figsize=(10, 5))
+plt.loglog(k_eta, E11_dimless, label='E11 / (ε ν⁵)¹/⁴')
+plt.loglog(k_eta, E22_dimless, label='E22 / (ε ν⁵)¹/⁴')
+plt.xlabel('k η')
+plt.ylabel('Dimensionless Energy Spectrum')
+plt.title('Dimensionless Energy Spectra')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+plt.figure(figsize=(10, 5))
+plt.semilogx(k_eta, E11_comp, label='Compensated E11')
+plt.semilogx(k_eta, E22_comp, label='Compensated E22')
+plt.axhline(0.52, color='gray', linestyle='--', label='C1 ≈ 0.52')
+plt.axhline(0.70, color='gray', linestyle=':', label='C2 ≈ 0.70')
+plt.xlabel('k η')
+plt.ylabel('Compensated Spectrum')
+plt.title('Compensated Energy Spectra')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
