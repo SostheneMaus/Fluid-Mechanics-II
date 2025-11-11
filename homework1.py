@@ -242,61 +242,40 @@ print(f"Kolmogorov scale eta = {eta:.6e} m")
 
 
 # 6 : Taylor micro-scale lambda
-# VERSION 1
-def compute_taylor_microscale_directional(u_rms, v_rms, w_rms, nu, epsilon_bar):
+def compute_taylor_microscale_directional(k_bar, epsilon_bar, nu):
     """
-    Computes directional Taylor microscales lambda_x, lambda_y, lambda_z.
+    Computes Taylor microscale using the formula:
+    λ = sqrt(10 * ν * k_bar / epsilon_bar)
 
     Args:
-        u_rms, v_rms, w_rms: RMS velocities in x, y, z directions
+        k_bar: Turbulent kinetic energy
+        epsilon_bar: Dissipation rate
         nu: Kinematic viscosity
-        epsilon_bar: Average dissipation rate
 
     Returns:
-        lambda_x, lambda_y, lambda_z: Taylor microscales in each direction
+        lambda_ke: Scalar Taylor microscale
     """
-    factor = np.sqrt(15 * nu / epsilon_bar)
-    lambda_x = u_rms * factor
-    lambda_y = v_rms * factor
-    lambda_z = w_rms * factor
-    return lambda_x, lambda_y, lambda_z
+    return np.sqrt(10 * nu * k_bar / epsilon_bar)
 
-lambda_x, lambda_y, lambda_z = compute_taylor_microscale_directional(u_rms, v_rms, w_rms, nu, epsilon_bar)
-lambda_mean = (lambda_x + lambda_y + lambda_z) / 3
-print(f"Taylor microscale lambda = {lambda_mean:.6e} m")
-
-# VERSION 2
-def compute_taylor_microscale_scalar(u_rms, v_rms, w_rms, nu, epsilon_bar):
-    """
-    Computes scalar Taylor microscale using averaged RMS velocity.
-
-    Returns:
-        lambda_scalar: Taylor microscale
-    """
-    u_rms_avg = np.sqrt((u_rms**2 + v_rms**2 + w_rms**2) / 3)
-    return u_rms_avg * np.sqrt(15 * nu / epsilon_bar)
-
-lambda_scalar = compute_taylor_microscale_scalar(u_rms, v_rms, w_rms, nu, epsilon_bar)
-print(f"Taylor microscale lambda = {lambda_scalar:.6e} m")
+lambda_taylor = compute_taylor_microscale_directional(k_bar, epsilon_bar, nu)
+print(f"Taylor microscale lambda = {lambda_taylor:.6e} m")
 
 
 # 7 : Reynolds number Re_lambda
-def compute_re_lambda(u_rms_avg, lambda_mean, nu):
+def compute_re_lambda(Re):
     """
-    Computes the Taylor-scale Reynolds number Re_lambda.
+    Computes the Taylor-scale Reynolds number using:
+    Re_lambda = sqrt((20/3) * Re)
 
     Args:
-        u_rms_avg: Average RMS velocity over u', v', w'
-        lambda_mean: Mean Taylor microscale
-        nu: Kinematic viscosity
+        Re: Integral-scale Reynolds number
 
     Returns:
         Re_lambda: Taylor-scale Reynolds number
     """
-    return u_rms_avg * lambda_mean / nu
+    return np.sqrt((20 / 3) * Re)
 
-u_rms_avg = (u_rms + v_rms + w_rms) / 3
-Re_lambda = compute_re_lambda(u_rms_avg, lambda_mean, nu)
+Re_lambda = compute_re_lambda(Re)
 print(f"Taylor-scale Reynolds number Re_lambda = {Re_lambda:.2f}")
 
 
