@@ -2,7 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from scipy.fft import fft
-
+import matplotlib.ticker as ticker
 
 ###################################################################################################
 # PART 1 : Open and read the files 
@@ -306,10 +306,10 @@ def compute_structure_functions(f, max_r):
 
 def average_structure_functions(dimension, component, max_r):
     """
-    Averages structure functions over all 16 pencils in a given direction.
+    Averages structure functions over all 48 pencils (x, y, z directions × 16 pencils each).
 
     Args:
-        dimension: 'x', 'y', or 'z'
+        dimension: 'all' to average over x, y, z; or 'x', 'y', 'z' for single direction
         component: 0 for u, 1 for v, 2 for w
         max_r: maximum separation in grid points
 
@@ -318,6 +318,7 @@ def average_structure_functions(dimension, component, max_r):
     """
     D_total = np.zeros(max_r)
     count = 0
+
 
     for i in range(4):
         for j in range(4):
@@ -330,9 +331,9 @@ def average_structure_functions(dimension, component, max_r):
 
     return r_vals, D_total / count
 
-
-max_r = int(5e3 * eta / (L / 32768))  # convert r/η to grid points
-
+dx = L / 32768
+max_r = int(5000 * eta / dx) # convert r/η to grid points
+  
 # Longitudinal: u from x-pencils
 r_vals, D11 = average_structure_functions('x', 0, max_r)
 
@@ -344,39 +345,48 @@ D22 = (D22_v + D22_w) / 2
 # Convert r to r/η
 r_eta = r_vals * (L / 32768) / eta
 
-# Compensated structure functions
-C2 = (18/55) * 1.6  # longitudinal
-C2_prime = (4/3) * C2  # transverse
-
-D11_comp = D11 / ((epsilon_bar * r_vals * (L / 32768))**(2/3))
-D22_comp = D22 / ((epsilon_bar * r_vals * (L / 32768))**(2/3))
+r_phys = r_vals * (L / 32768)
+D11_comp = D11 / ((epsilon_bar * r_phys)**(2/3))
+D22_comp = D22 / ((epsilon_bar * r_phys)**(2/3))
 
 
 plt.figure(figsize=(10, 5))
-plt.loglog(r_eta, D11, label='D11 (longitudinal)')
-plt.loglog(r_eta, D22, label='D22 (transverse)')
-plt.xlabel('r / η')
-plt.ylabel('Structure function D(r)')
+plt.loglog(r_eta, D11, label=r'$D_{11}(r)$ (Longitudinal)')
+plt.loglog(r_eta, D22, label=r'$D_{22}(r)$ (Transverse)')
+plt.xlabel(r'$r / \eta$')
+plt.ylabel(r'Structure function  $D_{jj}(r)$')
 plt.legend()
-plt.grid(True)
-plt.title('Structure functions D11 and D22')
+plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+plt.grid(True, which='minor', linestyle=':', linewidth=0.7, alpha=0.6)
+plt.title(r'Structure functions $D_{11}$ and $D_{22}$')
+plt.gca().xaxis.set_minor_locator(ticker.LogLocator(subs='all'))
+plt.gca().yaxis.set_minor_locator(ticker.LogLocator(subs='all'))
 plt.show()
 
+mask = (r_eta > 100) & (r_eta < 1000)
+C2_meas = np.mean(D11_comp[mask])
+C2p_meas = np.mean(D22_comp[mask])
+
 plt.figure(figsize=(10, 5))
-plt.semilogx(r_eta, D11_comp, label='Compensated D11')
-plt.semilogx(r_eta, D22_comp, label='Compensated D22')
-plt.axhline(C2, color='gray', linestyle='--', label='C2 ≈ 0.52')
-plt.axhline(C2_prime, color='gray', linestyle=':', label="C2' ≈ 0.70")
-plt.xlabel('r / η')
-plt.ylabel('Compensated structure function')
+line_D11, = plt.semilogx(r_eta, D11_comp, label=r'Compensated $D_{11}$')
+line_D22, = plt.semilogx(r_eta, D22_comp, label=r'Compensated $D_{22}$')
+plt.axhline(2.10, color=line_D11.get_color(), linestyle='--', label=r'$C_2 \approx 2.10$')
+plt.axhline(2.793, color=line_D22.get_color(), linestyle='--', label=r"$C_2' \approx 1.33C_2$")
+plt.axhline(C2_meas, color=line_D11.get_color(), linestyle=':', label=fr'$C_2^{{\text{{meas}}}} \approx {C2_meas:.2f}$')
+plt.axhline(C2p_meas, color=line_D22.get_color(), linestyle=':', label=fr"$C_2'^{{\text{{meas}}}} \approx {C2p_meas:.2f}$")
+plt.xlabel(r'$r / \eta$')
+plt.ylabel(r'Compensated structure function')
 plt.legend()
-plt.grid(True)
-plt.title('Compensated structure functions')
+plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+plt.grid(True, which='minor', linestyle=':', linewidth=0.7, alpha=0.6)
+plt.title(r'Compensated structure functions $D_{11}$ and $D_{22}$')
 plt.show()
 
 
 ###################################################################################################
 # PART 4 : One-dimensional energy spectra
+
+
 
 def compute_spectrum(f):
     f_hat = np.fft.fft(f)
