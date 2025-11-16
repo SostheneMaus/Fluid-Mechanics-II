@@ -23,19 +23,11 @@ def read_single_file(filepath):
     return u, v, w
 
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data")
+
 def get_file_path(dimension, i, j):
-    """
-    Builds the path to a data file
+    return os.path.join(DATA_DIR, f'pencils_{dimension}', f'{dimension}_{i}_{j}.txt')
 
-    Args:
-        dimension: 'x', 'y', or 'z' — the direction of the pencil
-        i, j: position indices
-
-    Returns:
-        Path to the file
-    """
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(current_dir, f'pencils_{dimension}', f'{dimension}_{i}_{j}.txt')
 
 
 ###################################################################################################
@@ -375,15 +367,27 @@ D22_comp = D22 / ((epsilon_bar * r_phys)**(2/3))
 plt.figure(figsize=(10, 5))
 plt.loglog(r_eta, D11, label=r'$D_{11}$ (Longitudinal)')
 plt.loglog(r_eta, D22, label=r'$D_{22}$ (Transverse)')
+
+# Droite théorique r^{2/3} sur toute la plage
+r_eta_theory = np.logspace(np.log10(7e-1), np.log10(7e3), 300)
+A = 0.01  # facteur visuel pour abaisser la courbe
+D_theory = A * r_eta_theory**(2/3)
+plt.loglog(r_eta_theory, D_theory, '--', color='k', label=r'$D(r) \sim r^{2/3}$')
+
 plt.xlabel(r'$r / \eta$')
 plt.ylabel(r'$D_{jj}(r\, \hat{e}_x)$')
 plt.legend()
 plt.grid(True, which='major', linestyle='-', linewidth=0.7)
 plt.grid(True, which='minor', linestyle=':', linewidth=0.7, alpha=0.6)
 plt.title(r'Structure functions')
+plt.xlim(7e-1, 7e3)  # Échelle fixe demandée
 plt.gca().xaxis.set_minor_locator(ticker.LogLocator(subs='all'))
 plt.gca().yaxis.set_minor_locator(ticker.LogLocator(subs='all'))
 plt.show()
+
+
+
+
 
 mask = (r_eta > 100) & (r_eta < 1000)
 C2_meas = np.mean(D11_comp[mask])
@@ -411,6 +415,9 @@ plt.show()
 
 
 def compute_spectrum(f, dx):
+    """
+    Compute 1D energy spectrum of a signal f.
+    """
     f = f - np.mean(f)
     N = f.size
     f_hat = np.fft.rfft(f)
@@ -422,126 +429,116 @@ def compute_spectrum(f, dx):
         E_k[1:] *= 2
     return k, E_k
 
-def average_energy_spectra():
+
+def average_energy_spectra(dx):
     """
-    Calcule les spectres 1D moyens E11 (longitudinal) et E22 (transverse)
-    à partir des 16 x-pencils (comme dans tes structure functions).
+    Compute averaged 1D energy spectra E11 (longitudinal) and E22 (transverse)
+    over all 48 pencils (x, y, z directions).
     """
-    # Initialisation
     E11_acc = None
     E22_acc = None
     count = 0
 
-    for i in range(4):
-        for j in range(4):
-            filepath = get_file_path('x', i, j)
-            u, v, w = read_single_file(filepath)
+    for dimension in ['x', 'y', 'z']:
+        for i in range(4):
+            for j in range(4):
+                filepath = get_file_path(dimension, i, j)
+                u, v, w = read_single_file(filepath)
 
-            k, E_u = compute_spectrum(u, dx)
-            _, E_v = compute_spectrum(v, dx)
-            _, E_w = compute_spectrum(w, dx)
+                # Longitudinal = component aligned with pencil direction
+                if dimension == 'x':
+                    k, E_long = compute_spectrum(u, dx)
+                    _, E_t1 = compute_spectrum(v, dx)
+                    _, E_t2 = compute_spectrum(w, dx)
+                elif dimension == 'y':
+                    k, E_long = compute_spectrum(v, dx)
+                    _, E_t1 = compute_spectrum(u, dx)
+                    _, E_t2 = compute_spectrum(w, dx)
+                elif dimension == 'z':
+                    k, E_long = compute_spectrum(w, dx)
+                    _, E_t1 = compute_spectrum(u, dx)
+                    _, E_t2 = compute_spectrum(v, dx)
 
-            E22_local = 0.5 * (E_v + E_w)  # moyenne transverse
+                # Transverse = average of the other two components
+                E_trans = 0.5 * (E_t1 + E_t2)
 
-            if E11_acc is None:
-                E11_acc = np.zeros_like(E_u)
-                E22_acc = np.zeros_like(E_u)
+                if E11_acc is None:
+                    E11_acc = np.zeros_like(E_long)
+                    E22_acc = np.zeros_like(E_long)
 
-            E11_acc += E_u
-            E22_acc += E22_local
-            count += 1
+                E11_acc += E_long
+                E22_acc += E_trans
+                count += 1
 
-    # Moyenne sur tous les pencils
     E11_avg = E11_acc / count
     E22_avg = E22_acc / count
-
     return k, E11_avg, E22_avg
-# Compute spectra
-N  = 32768
-dx = L / N
 
-# k, E11, E22 viennent de la version corrigée d'average_energy_spectra()
-k, E11, E22 = average_energy_spectra()      # k en rad/m (déjà un-sided, DC retiré)
+
+# --- Compute averaged spectra ---
+N = 32768
+dx = L / N
+k, E11, E22 = average_energy_spectra(dx)
 k_eta = k * eta
 
-# ---- Inner scaling (Kolmogorov) ----
-prefactor = (epsilon_bar * nu**5)**0.25     # = u_η^2 * η  avec u_η=(ν ε)^{1/4}, η=(ν^3/ε)^{1/4}
+# --- Dimensionless spectra ---
+prefactor = (epsilon_bar * nu**5)**0.25
 E11_dimless = E11 / prefactor
 E22_dimless = E22 / prefactor
 
-# Theory plot C_1k^-5/3 line
-C1 = 0.52
-C1_ = 0.70
-k_theory = np.linspace(1e-4, 5, 100)
-E11_theory = C1 * (k_theory)**(-5/3)   
-E22_theory = C1_ * (k_theory)**(-5/3)
-# masque: on garde kη >= 8e-3
-mask = k_eta >= 2e-5
+# Masks: only plot available data
+valid_mask = (k_eta > 0) & np.isfinite(E11_dimless) & (E11_dimless > 0)
+valid_mask_comp = (k_eta > 0) & np.isfinite(E11) & (E11 > 0)  # for compensated later
 
-plt.figure(figsize=(10,5))
-plt.xlim(1e-4, 5)
-plt.ylim(1e-13, 1e7)
+# Fixed x-range
+xmin, xmax = 1e-4, 5.0
 
-# données mesurées (masquées)
-plt.loglog(k_eta[mask], E11_dimless[mask], label=r'$E_{11}/(\varepsilon\nu^5)^{1/4}$', color='C0')
-plt.loglog(k_eta[mask], E22_dimless[mask], label=r'$E_{22}/(\varepsilon\nu^5)^{1/4}$', color='C1')
-
-# lignes théoriques: commence aussi à 8e-3 pour cohérence visuelle
+# Independent theory x-grid spanning the entire axis range
+k_theory = np.logspace(np.log10(xmin), np.log10(xmax), 400)
 E11_theory = 0.52 * k_theory**(-5/3)
 E22_theory = 0.70 * k_theory**(-5/3)
-plt.loglog(k_theory, E11_theory, '--', color='k', lw=2, label=r'$C_1 k^{-5/3}$, $C_1\approx0.52$', zorder=10)
-plt.loglog(k_theory, E22_theory, ':',  color='k', lw=2, label=r"$C_1' k^{-5/3}$, $C_1'\approx0.70$", zorder=10)
-plt.xlabel(r'$k_1\eta$')
-plt.ylabel(r'$E_{11,22}(k_1) / \left( \bar{\epsilon} \nu^5 \right)^{1/4}$')
-plt.title('Dimensionless 1D energy spectra')
-plt.grid(True, which='both', ls=':', alpha=0.6)
+
+# --- Plot dimensionless spectra ---
+plt.figure(figsize=(10,5))
+# Data (masked)
+plt.loglog(k_eta[valid_mask], E11_dimless[valid_mask], label=r'$E_{11}$', color='C0', zorder=2)
+plt.loglog(k_eta[valid_mask], E22_dimless[valid_mask], label=r'$E_{22}$', color='C1', zorder=2)
+# Theory (full x-range, no mask)
+plt.loglog(k_theory, E11_theory, '--', color='k', lw=2, label=r'Theory $C_1 k^{-5/3}$', zorder=10)
+plt.loglog(k_theory, E22_theory, ':',  color='k', lw=2, label=r'Theory $C_2 k^{-5/3}$', zorder=10)
+plt.xlim(xmin, xmax)
+plt.xlabel(r'$k_1 \eta$')
+plt.ylabel(r'$E_{ii}(k_1)/(\varepsilon\nu^5)^{1/4}$')
+plt.title('Dimensionless 1D Energy Spectra')
 plt.legend()
+plt.grid(True, which='both', ls=':')
 plt.show()
 
-
-# Kolmogorov inner scaling prefactor
-prefactor = (epsilon_bar * nu**5)**0.25
-k_eta = k * eta
-
-# Compensated dimensionless spectra
+# --- Compensated spectra ---
 E11_comp = (k_eta**(5/3)) * E11 / prefactor
 E22_comp = (k_eta**(5/3)) * E22 / prefactor
 
-# Mask for plotting and measuring
-plot_mask = k_eta > 1e-4
+# Plateau measurement (fixed range as you use)
 plateau_mask = (k_eta >= 1e-3) & (k_eta <= 1e-2)
-
-# Measure pseudo-plateau values
 C1_meas = np.mean(E11_comp[plateau_mask])
 C2_meas = np.mean(E22_comp[plateau_mask])
 
-# Plotting
-plt.figure(figsize=(10, 5))
-plt.xlim(1e-4, 5)
-plt.ylim(1e-12, 10)
-
-# Raw compensated spectra
-line_E11, = plt.loglog(k_eta[plot_mask], E11_comp[plot_mask], label=r'Compensated $E_{11}$', color='C0')
-line_E22, = plt.loglog(k_eta[plot_mask], E22_comp[plot_mask], label=r'Compensated $E_{22}$', color='C1')
-
-# Reference theoretical plateaus
-plt.axhline(0.52, linestyle='--', color='k', linewidth=2, label=r'Theory plateau $C_1 = 0.52$')
-plt.axhline(0.70, linestyle=':', color='k', linewidth=2, label=r'Theory plateau $C_2 = 0.70$')
-
+plt.figure(figsize=(10,5))
+# Data (masked)
+plt.loglog(k_eta[valid_mask_comp], E11_comp[valid_mask_comp], label=r'Compensated $E_{11}$', color='C0', zorder=2)
+plt.loglog(k_eta[valid_mask_comp], E22_comp[valid_mask_comp], label=r'Compensated $E_{22}$', color='C1', zorder=2)
+# Theory plateaus across full x-range
+plt.axhline(0.52, linestyle='--', color='k', linewidth=2, label=r'Theory plateau $C_1 = 0.52$', zorder=10)
+plt.axhline(0.70, linestyle=':',  color='k', linewidth=2, label=r'Theory plateau $C_2 = 0.70$', zorder=10)
 # Measured pseudo-plateaus
-plt.axhline(C1_meas, color=line_E11.get_color(), linestyle=':', label=fr'$C_1^{{\text{{measured}}}} \approx {C1_meas:.3f}$')
-plt.axhline(C2_meas, color=line_E22.get_color(), linestyle=':', label=fr"$C_2^{{\text{{measured}}}} \approx {C2_meas:.3f}$")
-
+plt.axhline(C1_meas, color='C0', linestyle=':', label=fr'Measured $C_1 \approx {C1_meas:.3f}$', zorder=3)
+plt.axhline(C2_meas, color='C1', linestyle=':', label=fr'Measured $C_2 \approx {C2_meas:.3f}$', zorder=3)
 # Highlight pseudo-plateau range
-plt.axvspan(1e-3, 1e-2, color='gray', alpha=0.15, label='"Pseudo-plateau" range')
-
-# Labels and layout
-plt.xlabel(r'$k_1\eta$')
-plt.ylabel(r'$(k_1\eta)^{5/3} \cdot E_{ii}(k_1) / (\varepsilon \nu^5)^{1/4}$')
+plt.axvspan(1e-3, 1e-2, color='gray', alpha=0.15, label='"Pseudo-plateau" range', zorder=1)
+plt.xlim(xmin, xmax)
+plt.xlabel(r'$k_1 \eta$')
+plt.ylabel(r'$(k_1\eta)^{5/3} E_{ii}(k_1)/(\varepsilon\nu^5)^{1/4}$')
 plt.title('Compensated Dimensionless 1D Energy Spectra')
 plt.legend()
-plt.grid(True, which='major', linestyle='-', linewidth=0.7)
-plt.grid(True, which='minor', linestyle=':', linewidth=0.7, alpha=0.6)
-plt.minorticks_on()
-plt.tight_layout()
+plt.grid(True, which='both', ls=':')
 plt.show()
